@@ -1,0 +1,154 @@
+.group-detail-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  margin: 30px 0;
+  flex-wrap: wrap;
+  gap: 20px;
+}
+
+.group-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  align-items: flex-end;
+}
+
+.creator-actions {
+  display: flex;
+  gap: 10px;
+}
+
+.badge {
+  padding: 6px 12px;
+  background-color: #007bff;
+  color: white;
+  border-radius: 4px;
+  font-size: 14px;
+  font-weight: bold;
+}
+
+.join-section {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  max-width: 400px;
+}
+
+.join-section textarea {
+  padding: 10px;
+  border: 1px solid #ddd;
+  border-radius: 5px;
+  font-size: 14px;
+}
+
+.group-info {
+  margin-bottom: 30px;
+}
+
+.group-info p {
+  margin-bottom: 10px;
+}
+
+.group-chat {
+  margin-top: 30px;
+}
+
+.messages-container {
+  max-height: 400px;
+  overflow-y: auto;
+  margin-bottom: 20px;
+  padding: 15px;
+  background-color: #f9f9f9;
+  border-radius: 5px;
+}
+
+.message {
+  margin-bottom: 15px;
+  padding: 10px;
+  background: white;
+  border-radius: 5px;
+}
+
+.message-time {
+  display: block;
+  font-size: 12px;
+  color: #666;
+  margin-top: 5px;
+}
+
+.message-form {
+  display: flex;
+  gap: 10px;
+}
+
+.message-form input {
+  flex: 1;
+  padding: 10px;
+  border: 1px solid #ddd;
+  border-radius: 5px;
+}
+
+.group-edit-form {
+  margin-bottom: 30px;
+}
+
+.group-edit-form h2 {
+  margin-bottom: 20px;
+  color: #333;
+}
+
+.group-edit-form .form-group {
+  margin-bottom: 15px;
+}
+
+.group-edit-form .form-group label {
+  display: block;
+  margin-bottom: 5px;
+  font-weight: 600;
+  color: #333;
+}
+
+.group-edit-form .form-group input,
+.group-edit-form .form-group textarea,
+.group-edit-form .form-group select {
+  width: 100%;
+  padding: 10px;
+  border: 1px solid #ddd;
+  border-radius: 5px;
+  font-size: 14px;
+  font-family: inherit;
+  box-sizing: border-box;
+}
+
+.group-edit-form .form-group input:focus,
+.group-edit-form .form-group textarea:focus,
+.group-edit-form .form-group select:focus {
+  outline: none;
+  border-color: #007bff;
+  box-shadow: 0 0 0 3px rgba(0, 123, 255, 0.1);
+}
+
+.group-edit-form .form-group textarea {
+  resize: vertical;
+  min-height: 100px;
+}
+
+.group-edit-form .form-group small {
+  display: block;
+  margin-top: 5px;
+  color: #666;
+  font-size: 12px;
+}
+
+.group-edit-form .form-group input[type="checkbox"] {
+  width: auto;
+  margin-right: 8px;
+}
+
+.group-edit-form .form-actions {
+  display: flex;
+  gap: 10px;
+  margin-top: 20px;
+}
+
