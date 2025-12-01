@@ -1,15 +1,24 @@
 package com.campusconnect.controller;
 
-import com.campusconnect.model.User;
-import com.campusconnect.security.UserPrincipal;
-import com.campusconnect.service.UserService;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.Set;
+
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
-import org.springframework.web.bind.annotation.*;
+import org.springframework.web.bind.annotation.CrossOrigin;
+import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PathVariable;
+import org.springframework.web.bind.annotation.PutMapping;
+import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestParam;
+import org.springframework.web.bind.annotation.RestController;
 
-import java.util.List;
-import java.util.Set;
+import com.campusconnect.model.User;
+import com.campusconnect.security.UserPrincipal;
+import com.campusconnect.service.UserService;
 
 @RestController
 @RequestMapping("/api/users")
@@ -22,6 +31,14 @@ public class UserController {
     public ResponseEntity<User> getCurrentUser(@AuthenticationPrincipal UserPrincipal userPrincipal) {
         User user = userService.getCurrentUser(userPrincipal.getId());
         return ResponseEntity.ok(user);
+    }
+
+    @GetMapping("/me/id")
+    public ResponseEntity<Map<String, Object>> getCurrentUserId(@AuthenticationPrincipal UserPrincipal userPrincipal) {
+        Map<String, Object> response = new HashMap<>();
+        response.put("userId", userPrincipal.getId());
+        response.put("username", userPrincipal.getUsername());
+        return ResponseEntity.ok(response);
     }
 
     @GetMapping("/{id}")

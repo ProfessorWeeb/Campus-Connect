@@ -21,6 +21,7 @@ import com.campusconnect.dto.GroupDTO;
 import com.campusconnect.model.Group;
 import com.campusconnect.model.GroupInvitation;
 import com.campusconnect.model.GroupJoinRequest;
+import com.campusconnect.repository.UserRepository;
 import com.campusconnect.security.UserPrincipal;
 import com.campusconnect.service.GroupService;
 
@@ -30,6 +31,9 @@ import com.campusconnect.service.GroupService;
 public class GroupController {
     @Autowired
     private GroupService groupService;
+
+    @Autowired
+    private UserRepository userRepository;
 
     @PostMapping
     public ResponseEntity<GroupDTO> createGroup(
@@ -71,7 +75,16 @@ public class GroupController {
     }
 
     @GetMapping("/search")
-    public ResponseEntity<List<GroupDTO>> searchGroups(@RequestParam(required = false) String query) {
+    public ResponseEntity<List<GroupDTO>> searchGroups(
+            @AuthenticationPrincipal UserPrincipal userPrincipal,
+            @RequestParam(required = false) String query) {
+        
+        // Track search if user is authenticated
+        if (userPrincipal != null && query != null && !query.trim().isEmpty()) {
+            groupService.trackSearch(userPrincipal.getId(), query, 
+                com.campusconnect.model.SearchHistory.SearchType.GENERAL);
+        }
+        
         List<GroupDTO> groups = groupService.searchGroups(query).stream()
                 .map(groupService::convertToDTO)
                 .collect(Collectors.toList());
@@ -79,7 +92,16 @@ public class GroupController {
     }
 
     @GetMapping("/by-course")
-    public ResponseEntity<List<GroupDTO>> getGroupsByCourse(@RequestParam String courseName) {
+    public ResponseEntity<List<GroupDTO>> getGroupsByCourse(
+            @AuthenticationPrincipal UserPrincipal userPrincipal,
+            @RequestParam String courseName) {
+        
+        // Track course search if user is authenticated
+        if (userPrincipal != null && courseName != null && !courseName.trim().isEmpty()) {
+            groupService.trackSearch(userPrincipal.getId(), courseName, 
+                com.campusconnect.model.SearchHistory.SearchType.COURSE_NAME);
+        }
+        
         List<GroupDTO> groups = groupService.getGroupsByCourse(courseName).stream()
                 .map(groupService::convertToDTO)
                 .collect(Collectors.toList());
@@ -114,6 +136,48 @@ public class GroupController {
                 .map(groupService::convertToDTO)
                 .collect(Collectors.toList());
         return ResponseEntity.ok(groups);
+    }
+
+    /**
+     * Diagnostic endpoint to debug recommendation issues
+     * GET /api/groups/recommended/debug?userId=1
+     * GET /api/groups/recommended/debug?username=Danie_000
+     * Can be called with or without authentication
+     */
+    @GetMapping(value = "/recommended/debug", produces = "application/json")
+    public ResponseEntity<Map<String, Object>> getRecommendedGroupsDebug(
+            @AuthenticationPrincipal UserPrincipal userPrincipal,
+            @RequestParam(required = false) Long userId,
+            @RequestParam(required = false) String username) {
+        
+        Long targetUserId = null;
+        
+        // Try to get userId from various sources
+        if (userId != null) {
+            targetUserId = userId;
+        } else if (username != null && !username.isEmpty()) {
+            // Look up user by username
+            try {
+                com.campusconnect.model.User user = userRepository.findByUsername(username)
+                        .orElseThrow(() -> new RuntimeException("User not found with username: " + username));
+                targetUserId = user.getId();
+            } catch (Exception e) {
+                Map<String, Object> error = new HashMap<>();
+                error.put("error", "User not found with username: " + username);
+                return ResponseEntity.badRequest().body(error);
+            }
+        } else if (userPrincipal != null) {
+            targetUserId = userPrincipal.getId();
+        }
+        
+        if (targetUserId == null) {
+            Map<String, Object> error = new HashMap<>();
+            error.put("error", "userId or username parameter required, or user must be authenticated");
+            error.put("example", "Use ?userId=1 or ?username=your_username");
+            return ResponseEntity.badRequest().body(error);
+        }
+        
+        return ResponseEntity.ok(groupService.getRecommendedGroupsDebug(targetUserId));
     }
 
     /**

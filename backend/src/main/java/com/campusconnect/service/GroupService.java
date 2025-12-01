@@ -1,5 +1,6 @@
 package com.campusconnect.service;
 
+import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.HashSet;
@@ -16,10 +17,12 @@ import com.campusconnect.dto.GroupDTO;
 import com.campusconnect.model.Group;
 import com.campusconnect.model.GroupInvitation;
 import com.campusconnect.model.GroupJoinRequest;
+import com.campusconnect.model.SearchHistory;
 import com.campusconnect.model.User;
 import com.campusconnect.repository.GroupInvitationRepository;
 import com.campusconnect.repository.GroupJoinRequestRepository;
 import com.campusconnect.repository.GroupRepository;
+import com.campusconnect.repository.SearchHistoryRepository;
 import com.campusconnect.repository.UserRepository;
 
 @Service
@@ -35,6 +38,9 @@ public class GroupService {
 
     @Autowired
     private GroupInvitationRepository invitationRepository;
+
+    @Autowired
+    private SearchHistoryRepository searchHistoryRepository;
 
     @Transactional
     public Group createGroup(Long creatorId, String name, String description, 
@@ -545,44 +551,158 @@ public class GroupService {
 
     /**
      * Get recommended groups for a user based on:
-     * - Groups they've joined (similar courses/topics)
-     * - Groups they've created (similar courses/topics)
+     * - Groups they've joined (names, courses, topics)
+     * - Groups they've created (names, courses, topics)
      * - User's courses/interests
+     * - Search history (group names searched, courses searched)
+     * - Collaborative filtering: Groups that members of user's groups are part of
+     * 
+     * OPTIMIZED: Uses database queries to filter groups instead of loading all groups into memory
      */
     public List<Group> getRecommendedGroups(Long userId) {
         User user = userRepository.findById(userId)
                 .orElseThrow(() -> new RuntimeException("User not found"));
 
-        // Get groups user is already part of (joined or created)
-        List<Group> userGroups = getUserGroups(userId);
-        List<Group> createdGroups = groupRepository.findByCreatorId(userId);
-        Set<Long> excludedGroupIds = new HashSet<>();
-        userGroups.forEach(g -> excludedGroupIds.add(g.getId()));
-        createdGroups.forEach(g -> excludedGroupIds.add(g.getId()));
+        // Get recent search history (last 30 days) - wrap in try-catch to prevent errors from breaking recommendations
+        LocalDateTime thirtyDaysAgo = LocalDateTime.now().minusDays(30);
+        List<String> searchedGroupNames = new ArrayList<>();
+        List<String> searchedCourseNames = new ArrayList<>();
+        List<String> searchedCourseCodes = new ArrayList<>();
+        List<String> searchedTopics = new ArrayList<>();
+        List<String> generalSearches = new ArrayList<>();
+        
+        try {
+            searchedGroupNames = searchHistoryRepository.findDistinctQueriesByType(
+                userId, SearchHistory.SearchType.GROUP_NAME, thirtyDaysAgo);
+            searchedCourseNames = searchHistoryRepository.findDistinctQueriesByType(
+                userId, SearchHistory.SearchType.COURSE_NAME, thirtyDaysAgo);
+            searchedCourseCodes = searchHistoryRepository.findDistinctQueriesByType(
+                userId, SearchHistory.SearchType.COURSE_CODE, thirtyDaysAgo);
+            searchedTopics = searchHistoryRepository.findDistinctQueriesByType(
+                userId, SearchHistory.SearchType.TOPIC, thirtyDaysAgo);
+            generalSearches = searchHistoryRepository.findDistinctQueriesByType(
+                userId, SearchHistory.SearchType.GENERAL, thirtyDaysAgo);
+        } catch (Exception e) {
+            // If search history query fails, continue without search history (don't break recommendations)
+            // This can happen if the search_history table doesn't exist yet or has schema issues
+        }
 
-        // Collect keywords from user's groups
+        // Collect keywords from user's groups (only load what we need)
+        Set<String> groupNames = new HashSet<>();
         Set<String> courseNames = new HashSet<>();
         Set<String> courseCodes = new HashSet<>();
         Set<String> topics = new HashSet<>();
+        Set<Long> userGroupIds = new HashSet<>(); // For collaborative filtering
+        Set<Character> courseCodeFirstChars = new HashSet<>(); // First character of course codes for prioritization
+        Set<String> courseCodePrefixes = new HashSet<>(); // Course code prefixes (e.g., "MATH 4" from "MATH 4110")
+        
+        // Add search history to keywords
+        searchedGroupNames.forEach(name -> groupNames.add(name.toLowerCase()));
+        searchedCourseNames.forEach(name -> courseNames.add(name.toLowerCase()));
+        searchedCourseCodes.forEach(code -> courseCodes.add(code.toLowerCase()));
+        searchedTopics.forEach(topic -> topics.add(topic.toLowerCase()));
+        // General searches could be group names, courses, or topics - add to all
+        generalSearches.forEach(query -> {
+            String lowerQuery = query.toLowerCase();
+            groupNames.add(lowerQuery);
+            courseNames.add(lowerQuery);
+            topics.add(lowerQuery);
+        });
 
+        // Get user's groups and extract keywords
+        List<Group> userGroups = getUserGroups(userId);
+        List<Group> createdGroups = groupRepository.findByCreatorId(userId);
+        
+        // Extract keywords from joined groups
         userGroups.forEach(group -> {
+            userGroupIds.add(group.getId());
+            if (group.getName() != null) {
+                groupNames.add(group.getName().toLowerCase());
+            }
             if (group.getCourseName() != null) {
                 courseNames.add(group.getCourseName().toLowerCase());
             }
             if (group.getCourseCode() != null) {
-                courseCodes.add(group.getCourseCode().toLowerCase());
+                String code = group.getCourseCode().toLowerCase().trim();
+                courseCodes.add(code);
+                // Extract first non-space character for prioritization
+                if (!code.isEmpty()) {
+                    // Find first non-whitespace character (handles edge cases)
+                    for (int i = 0; i < code.length(); i++) {
+                        char ch = code.charAt(i);
+                        if (!Character.isWhitespace(ch)) {
+                            courseCodeFirstChars.add(Character.toUpperCase(ch));
+                            break;
+                        }
+                    }
+                    // Extract course code prefix (e.g., "MATH 4" from "MATH 4110")
+                    // Look for pattern: LETTERS + SPACE + DIGIT (e.g., "MATH 4", "CSCI 2")
+                    int spaceIndex = code.indexOf(' ');
+                    if (spaceIndex > 0 && spaceIndex < code.length() - 1) {
+                        // Extract up to and including the first digit after the space
+                        String prefix = code.substring(0, spaceIndex + 1);
+                        // Find the first digit after the space
+                        for (int i = spaceIndex + 1; i < code.length(); i++) {
+                            char ch = code.charAt(i);
+                            if (Character.isDigit(ch)) {
+                                prefix += ch;
+                                courseCodePrefixes.add(prefix); // e.g., "math 4"
+                                break;
+                            } else if (!Character.isWhitespace(ch)) {
+                                // If we hit a non-digit, non-space character, stop
+                                break;
+                            }
+                        }
+                    }
+                }
             }
             if (group.getTopic() != null) {
                 topics.add(group.getTopic().toLowerCase());
             }
         });
 
+        // Extract keywords from created groups
         createdGroups.forEach(group -> {
+            userGroupIds.add(group.getId());
+            if (group.getName() != null) {
+                groupNames.add(group.getName().toLowerCase());
+            }
             if (group.getCourseName() != null) {
                 courseNames.add(group.getCourseName().toLowerCase());
             }
             if (group.getCourseCode() != null) {
-                courseCodes.add(group.getCourseCode().toLowerCase());
+                String code = group.getCourseCode().toLowerCase().trim();
+                courseCodes.add(code);
+                // Extract first non-space character for prioritization
+                if (!code.isEmpty()) {
+                    // Find first non-whitespace character (handles edge cases)
+                    for (int i = 0; i < code.length(); i++) {
+                        char ch = code.charAt(i);
+                        if (!Character.isWhitespace(ch)) {
+                            courseCodeFirstChars.add(Character.toUpperCase(ch));
+                            break;
+                        }
+                    }
+                    // Extract course code prefix (e.g., "MATH 4" from "MATH 4110")
+                    // Look for pattern: LETTERS + SPACE + DIGIT (e.g., "MATH 4", "CSCI 2")
+                    int spaceIndex = code.indexOf(' ');
+                    if (spaceIndex > 0 && spaceIndex < code.length() - 1) {
+                        // Extract up to and including the first digit after the space
+                        String prefix = code.substring(0, spaceIndex + 1);
+                        // Find the first digit after the space
+                        for (int i = spaceIndex + 1; i < code.length(); i++) {
+                            char ch = code.charAt(i);
+                            if (Character.isDigit(ch)) {
+                                prefix += ch;
+                                courseCodePrefixes.add(prefix); // e.g., "math 4"
+                                break;
+                            } else if (!Character.isWhitespace(ch)) {
+                                // If we hit a non-digit, non-space character, stop
+                                break;
+                            }
+                        }
+                    }
+                }
             }
             if (group.getTopic() != null) {
                 topics.add(group.getTopic().toLowerCase());
@@ -596,37 +716,195 @@ public class GroupService {
             });
         }
 
-        // Find matching groups
+        // OPTIMIZED: Query database for matching groups instead of loading all groups
+        Set<Group> candidateGroups = new HashSet<>();
+        
+        // Only query if we have keywords to search for
+        // Query by group names (from groups user has joined/created + search history)
+        if (!groupNames.isEmpty()) {
+            for (String groupName : groupNames) {
+                List<Group> matches = groupRepository.findRecommendedByGroupName(userId, groupName);
+                candidateGroups.addAll(matches);
+            }
+        }
+        
+        // Query by course names (from groups + user courses + search history)
+        if (!courseNames.isEmpty()) {
+            for (String courseName : courseNames) {
+                List<Group> matches = groupRepository.findRecommendedByCourseName(userId, courseName);
+                candidateGroups.addAll(matches);
+            }
+        }
+        
+        // Query by course codes (from groups + search history)
+        if (!courseCodes.isEmpty()) {
+            for (String courseCode : courseCodes) {
+                List<Group> matches = groupRepository.findRecommendedByCourseCode(userId, courseCode);
+                candidateGroups.addAll(matches);
+            }
+        }
+        
+        // Query by topics (from groups + search history)
+        if (!topics.isEmpty()) {
+            for (String topic : topics) {
+                List<Group> matches = groupRepository.findRecommendedByTopic(userId, topic);
+                candidateGroups.addAll(matches);
+            }
+        }
+        
+        // Collaborative filtering: Groups that members of user's groups are part of
+        Map<Group, Boolean> collaborativeGroups = new HashMap<>(); // Track which groups came from collaborative filtering
+        if (!userGroupIds.isEmpty()) {
+            List<Group> collaborativeMatches = groupRepository.findRecommendedByCollaborativeFiltering(userId, new ArrayList<>(userGroupIds));
+            candidateGroups.addAll(collaborativeMatches);
+            // Mark these as collaborative filtering groups for scoring
+            collaborativeMatches.forEach(g -> collaborativeGroups.put(g, true));
+        }
+        
+        // If no candidate groups found from keyword matching, ALWAYS try general recommendations
+        // This handles the case where user's groups don't have course names/codes/topics set
+        if (candidateGroups.isEmpty()) {
+            return getGeneralRecommendationsFallback(userId);
+        }
+
+        // Score only the candidate groups (much smaller set than all groups)
         Map<Group, Integer> groupScores = new HashMap<>();
         
-        // Get all public groups
-        List<Group> allPublicGroups = getAllGroups();
-        
-        for (Group group : allPublicGroups) {
-            if (excludedGroupIds.contains(group.getId())) {
-                continue; // Skip groups user is already in
+        for (Group group : candidateGroups) {
+            int score = 0;
+            boolean isCollaborative = collaborativeGroups.getOrDefault(group, false);
+
+            // HIGH WEIGHT: Collaborative filtering (groups that members of user's groups are in)
+            if (isCollaborative) {
+                score += 25; // Strong signal - people in your groups are in these groups
             }
 
-            int score = 0;
+            // HIGH WEIGHT: Search history matches (user has searched for similar terms)
+            // Check if group name matches searched group names
+            if (group.getName() != null) {
+                String groupName = group.getName().toLowerCase();
+                for (String searchedName : searchedGroupNames) {
+                    if (groupName.contains(searchedName.toLowerCase()) || 
+                        searchedName.toLowerCase().contains(groupName)) {
+                        score += 18; // User searched for group names like this
+                        break;
+                    }
+                }
+            }
+            
+            // Check if course name matches searched course names
+            if (group.getCourseName() != null) {
+                String groupCourseName = group.getCourseName().toLowerCase();
+                for (String searchedCourse : searchedCourseNames) {
+                    if (groupCourseName.contains(searchedCourse.toLowerCase()) || 
+                        searchedCourse.toLowerCase().contains(groupCourseName)) {
+                        score += 18; // User searched for courses like this
+                        break;
+                    }
+                }
+            }
+            
+            // Check if course code matches searched course codes
+            if (group.getCourseCode() != null) {
+                String groupCourseCode = group.getCourseCode().toLowerCase();
+                for (String searchedCode : searchedCourseCodes) {
+                    if (groupCourseCode.equals(searchedCode.toLowerCase())) {
+                        score += 20; // Exact match with searched course code
+                        break;
+                    } else if (groupCourseCode.contains(searchedCode.toLowerCase()) || 
+                               searchedCode.toLowerCase().contains(groupCourseCode)) {
+                        score += 15; // Partial match with searched course code
+                        break;
+                    }
+                }
+            }
+            
+            // Check if topic matches searched topics
+            if (group.getTopic() != null) {
+                String groupTopic = group.getTopic().toLowerCase();
+                for (String searchedTopic : searchedTopics) {
+                    if (groupTopic.contains(searchedTopic.toLowerCase()) || 
+                        searchedTopic.toLowerCase().contains(groupTopic)) {
+                        score += 12; // User searched for topics like this
+                        break;
+                    }
+                }
+            }
+            
+            // Check general searches (could match any field)
+            if (!generalSearches.isEmpty()) {
+                String searchQuery = generalSearches.get(0).toLowerCase(); // Use most recent
+                if (group.getName() != null && group.getName().toLowerCase().contains(searchQuery)) {
+                    score += 15;
+                } else if (group.getCourseName() != null && group.getCourseName().toLowerCase().contains(searchQuery)) {
+                    score += 15;
+                } else if (group.getCourseCode() != null && group.getCourseCode().toLowerCase().contains(searchQuery)) {
+                    score += 15;
+                } else if (group.getTopic() != null && group.getTopic().toLowerCase().contains(searchQuery)) {
+                    score += 12;
+                }
+            }
+
+            // Score based on group name match (from groups user has joined/created)
+            if (group.getName() != null) {
+                String groupName = group.getName().toLowerCase();
+                for (String userGroupName : groupNames) {
+                    if (groupName.equals(userGroupName)) {
+                        score += 12; // Exact match
+                    } else if (groupName.contains(userGroupName) || userGroupName.contains(groupName)) {
+                        score += 8; // Partial match
+                    }
+                }
+            }
 
             // Score based on course name match
             if (group.getCourseName() != null) {
                 String groupCourseName = group.getCourseName().toLowerCase();
                 for (String courseName : courseNames) {
-                    if (groupCourseName.contains(courseName) || courseName.contains(groupCourseName)) {
-                        score += 10;
+                    if (groupCourseName.equals(courseName)) {
+                        score += 15; // Exact match
+                    } else if (groupCourseName.contains(courseName) || courseName.contains(groupCourseName)) {
+                        score += 10; // Partial match
                     }
                 }
             }
 
             // Score based on course code match
             if (group.getCourseCode() != null) {
-                String groupCourseCode = group.getCourseCode().toLowerCase();
+                String groupCourseCode = group.getCourseCode().toLowerCase().trim();
+                
+                // HIGHEST PRIORITY: Course code prefix match (e.g., "MATH 4" matches "MATH 4150", "MATH 4260")
+                if (!groupCourseCode.isEmpty() && !courseCodePrefixes.isEmpty()) {
+                    for (String prefix : courseCodePrefixes) {
+                        if (groupCourseCode.startsWith(prefix)) {
+                            score += 30; // Highest priority - same course code prefix (e.g., MATH 4xxx courses)
+                            break; // Only count once
+                        }
+                    }
+                }
+                
+                // HIGH PRIORITY: First non-space character match (same department/subject area)
+                // Only apply if prefix match didn't already apply
+                if (!groupCourseCode.isEmpty() && !courseCodeFirstChars.isEmpty()) {
+                    // Find first non-whitespace character
+                    for (int i = 0; i < groupCourseCode.length(); i++) {
+                        char ch = groupCourseCode.charAt(i);
+                        if (!Character.isWhitespace(ch)) {
+                            char groupFirstChar = Character.toUpperCase(ch);
+                            if (courseCodeFirstChars.contains(groupFirstChar)) {
+                                score += 22; // High priority - same department (e.g., CSCI, MATH, ENGL)
+                            }
+                            break; // Only check the first non-space character
+                        }
+                    }
+                }
+                
+                // Exact and partial matches
                 for (String courseCode : courseCodes) {
                     if (groupCourseCode.equals(courseCode)) {
-                        score += 15; // Exact match is worth more
+                        score += 20; // Exact match is worth more
                     } else if (groupCourseCode.contains(courseCode) || courseCode.contains(groupCourseCode)) {
-                        score += 8;
+                        score += 8; // Partial match
                     }
                 }
             }
@@ -635,16 +913,20 @@ public class GroupService {
             if (group.getTopic() != null) {
                 String groupTopic = group.getTopic().toLowerCase();
                 for (String topic : topics) {
-                    if (groupTopic.contains(topic) || topic.contains(groupTopic)) {
-                        score += 5;
+                    if (groupTopic.equals(topic)) {
+                        score += 8; // Exact match
+                    } else if (groupTopic.contains(topic) || topic.contains(groupTopic)) {
+                        score += 5; // Partial match
                     }
                 }
             }
 
-            // Bonus for groups with available spots
-            if (group.getMembers().size() < group.getMaxSize()) {
+            // Small bonus for groups with available spots (full groups are still recommended)
+            // Full groups are included in recommendations - they just get a slightly lower score
+            if (group.getMaxSize() != null && group.getMembers().size() < group.getMaxSize()) {
                 score += 2;
             }
+            // Note: Full groups (members.size() >= maxSize) are still included if they have score > 0
 
             if (score > 0) {
                 groupScores.put(group, score);
@@ -652,11 +934,194 @@ public class GroupService {
         }
 
         // Sort by score (descending) and return top 10
-        return groupScores.entrySet().stream()
+        List<Group> recommended = groupScores.entrySet().stream()
                 .sorted(Map.Entry.<Group, Integer>comparingByValue().reversed())
                 .limit(10)
                 .map(Map.Entry::getKey)
                 .collect(Collectors.toList());
+        
+        // FALLBACK: If no recommendations found, show general recommendations (recent public groups)
+        if (recommended.isEmpty()) {
+            return getGeneralRecommendationsFallback(userId);
+        }
+        
+        return recommended;
+    }
+
+    /**
+     * Fallback method to get general recommendations when no specific matches are found
+     */
+    private List<Group> getGeneralRecommendationsFallback(Long userId) {
+        // Try the general recommendations query first
+        try {
+            List<Group> generalRecommendations = groupRepository.findGeneralRecommendations(userId);
+            if (!generalRecommendations.isEmpty()) {
+                return generalRecommendations.stream()
+                        .limit(10)
+                        .collect(Collectors.toList());
+            }
+        } catch (Exception e) {
+            // If query fails, continue to fallback
+        }
+        
+        // Last resort: Get any public active groups (excluding user's own)
+        // This bypasses the query and directly filters all groups
+        try {
+            List<Group> allGroups = groupRepository.findAll();
+            List<Group> allPublicGroups = allGroups.stream()
+                    .filter(g -> g != null)
+                    .filter(g -> g.getStatus() == Group.GroupStatus.ACTIVE)
+                    .filter(g -> g.getVisibility() == Group.GroupVisibility.PUBLIC)
+                    .filter(g -> g.getCreator() != null && !g.getCreator().getId().equals(userId))
+                    .filter(g -> g.getMembers().stream().noneMatch(m -> m != null && m.getId().equals(userId)))
+                    .sorted((g1, g2) -> {
+                        if (g1.getCreatedAt() == null || g2.getCreatedAt() == null) {
+                            return 0;
+                        }
+                        return g2.getCreatedAt().compareTo(g1.getCreatedAt());
+                    })
+                    .limit(10)
+                    .collect(Collectors.toList());
+            
+            if (!allPublicGroups.isEmpty()) {
+                return allPublicGroups;
+            }
+            
+            // If still empty, try without status/visibility filters (groups might not be set correctly)
+            allPublicGroups = allGroups.stream()
+                    .filter(g -> g != null)
+                    .filter(g -> g.getCreator() != null && !g.getCreator().getId().equals(userId))
+                    .filter(g -> g.getMembers().stream().noneMatch(m -> m != null && m.getId().equals(userId)))
+                    .limit(10)
+                    .collect(Collectors.toList());
+            
+            return allPublicGroups;
+        } catch (Exception e) {
+            // If all else fails, return empty list
+            return new ArrayList<>();
+        }
+    }
+
+    /**
+     * Diagnostic method to debug recommendation issues
+     */
+    public Map<String, Object> getRecommendedGroupsDebug(Long userId) {
+        Map<String, Object> debug = new HashMap<>();
+        
+        try {
+            User user = userRepository.findById(userId)
+                    .orElseThrow(() -> new RuntimeException("User not found"));
+            
+            // Get all groups
+            List<Group> allGroups = groupRepository.findAll();
+            debug.put("totalGroupsInDatabase", allGroups.size());
+            
+            // Get user's groups
+            List<Group> userGroups = getUserGroups(userId);
+            List<Group> createdGroups = groupRepository.findByCreatorId(userId);
+            debug.put("userJoinedGroups", userGroups.size());
+            debug.put("userCreatedGroups", createdGroups.size());
+            
+            // Get groups user is NOT part of
+            Set<Long> userGroupIds = new HashSet<>();
+            userGroups.forEach(g -> userGroupIds.add(g.getId()));
+            createdGroups.forEach(g -> userGroupIds.add(g.getId()));
+            
+            List<Group> notUserGroups = allGroups.stream()
+                    .filter(g -> !userGroupIds.contains(g.getId()))
+                    .collect(Collectors.toList());
+            debug.put("groupsNotUserPartOf", notUserGroups.size());
+            
+            // Check status and visibility
+            long activePublic = notUserGroups.stream()
+                    .filter(g -> g.getStatus() == Group.GroupStatus.ACTIVE)
+                    .filter(g -> g.getVisibility() == Group.GroupVisibility.PUBLIC)
+                    .count();
+            debug.put("activePublicGroupsNotUserPartOf", activePublic);
+            
+            // Try the general recommendations query
+            try {
+                List<Group> generalRecs = groupRepository.findGeneralRecommendations(userId);
+                debug.put("generalRecommendationsQueryResult", generalRecs.size());
+                if (!generalRecs.isEmpty()) {
+                    debug.put("generalRecommendationsSample", generalRecs.stream()
+                            .limit(3)
+                            .map(g -> {
+                                Map<String, Object> groupInfo = new HashMap<>();
+                                groupInfo.put("id", g.getId());
+                                groupInfo.put("name", g.getName() != null ? g.getName() : "null");
+                                groupInfo.put("status", g.getStatus() != null ? g.getStatus().toString() : "null");
+                                groupInfo.put("visibility", g.getVisibility() != null ? g.getVisibility().toString() : "null");
+                                groupInfo.put("creatorId", g.getCreator() != null ? g.getCreator().getId() : "null");
+                                return groupInfo;
+                            })
+                            .collect(Collectors.toList()));
+                }
+            } catch (Exception e) {
+                debug.put("generalRecommendationsQueryError", e.getMessage());
+            }
+            
+            // Try the fallback
+            List<Group> fallback = getGeneralRecommendationsFallback(userId);
+            debug.put("fallbackResult", fallback.size());
+            if (!fallback.isEmpty()) {
+                debug.put("fallbackSample", fallback.stream()
+                        .limit(3)
+                        .map(g -> {
+                            Map<String, Object> groupInfo = new HashMap<>();
+                            groupInfo.put("id", g.getId());
+                            groupInfo.put("name", g.getName() != null ? g.getName() : "null");
+                            groupInfo.put("status", g.getStatus() != null ? g.getStatus().toString() : "null");
+                            groupInfo.put("visibility", g.getVisibility() != null ? g.getVisibility().toString() : "null");
+                            return groupInfo;
+                        })
+                        .collect(Collectors.toList()));
+            }
+            
+            // Get actual recommendations
+            List<Group> recommendations = getRecommendedGroups(userId);
+            debug.put("actualRecommendationsCount", recommendations.size());
+            
+            // Extract keywords from user's groups
+            Set<String> courseNames = new HashSet<>();
+            Set<String> courseCodes = new HashSet<>();
+            userGroups.forEach(g -> {
+                if (g.getCourseName() != null) courseNames.add(g.getCourseName());
+                if (g.getCourseCode() != null) courseCodes.add(g.getCourseCode());
+            });
+            createdGroups.forEach(g -> {
+                if (g.getCourseName() != null) courseNames.add(g.getCourseName());
+                if (g.getCourseCode() != null) courseCodes.add(g.getCourseCode());
+            });
+            debug.put("extractedCourseNames", courseNames);
+            debug.put("extractedCourseCodes", courseCodes);
+            
+        } catch (Exception e) {
+            debug.put("error", e.getMessage());
+            debug.put("errorStackTrace", e.getClass().getName());
+        }
+        
+        return debug;
+    }
+
+    /**
+     * Track a user's search for recommendation purposes
+     */
+    @Transactional
+    public void trackSearch(Long userId, String query, SearchHistory.SearchType searchType) {
+        if (query == null || query.trim().isEmpty()) {
+            return;
+        }
+        
+        User user = userRepository.findById(userId)
+                .orElseThrow(() -> new RuntimeException("User not found"));
+        
+        SearchHistory searchHistory = new SearchHistory();
+        searchHistory.setUser(user);
+        searchHistory.setQuery(query.trim());
+        searchHistory.setSearchType(searchType);
+        
+        searchHistoryRepository.save(searchHistory);
     }
 }
 
