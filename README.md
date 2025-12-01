@@ -32,6 +32,8 @@ CampusConnect/
 
 ### Backend Setup
 
+(You might need to run start_postgres before going to the backend folder.)
+
 1. Navigate to `backend/` directory
 2. Configure database in `src/main/resources/application.properties`
 3. Run: `./mvnw spring-boot:run`
