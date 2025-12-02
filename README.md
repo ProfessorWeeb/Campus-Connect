@@ -36,13 +36,23 @@ CampusConnect/
 
 1. Navigate to `backend/` directory
 2. Configure database in `src/main/resources/application.properties`
-3. Run: `./mvnw spring-boot:run`
+3. Run: `./mvnw spring-boot:run` (or `start_backend.bat` on Windows)
 
 ### Frontend Setup
 
 1. Navigate to `frontend/` directory
 2. Install dependencies: `npm install`
 3. Run: `npm start`
+
+### Setting Up Bot Groups (Test Data)
+
+After pulling from GitHub, you need to seed bot users and groups:
+
+1. **Start the backend** (if not already running)
+2. **Run the bot seeder**: `seed_bots.bat` (Windows) or use the API endpoint
+3. This creates 100 bot users and 25 groups for testing
+
+See [SETUP_BOTS.md](SETUP_BOTS.md) for detailed instructions.
 
 ## Development
 
