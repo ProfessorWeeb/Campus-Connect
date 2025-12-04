@@ -25,11 +25,11 @@ public class MessageService {
     private GroupRepository groupRepository;
 
     @Transactional
-    public Message sendDirectMessage(Long senderId, Long recipientId, String content) {
+    public Message sendDirectMessage(Long senderId, String recipientUsername, String content) {
         User sender = userRepository.findById(senderId)
                 .orElseThrow(() -> new RuntimeException("Sender not found"));
-        User recipient = userRepository.findById(recipientId)
-                .orElseThrow(() -> new RuntimeException("Recipient not found"));
+        User recipient = userRepository.findByUsername(recipientUsername)
+                .orElseThrow(() -> new RuntimeException("Recipient not found with username: " + recipientUsername));
 
         Message message = new Message();
         message.setSender(sender);
@@ -63,7 +63,7 @@ public class MessageService {
     }
 
     public List<Message> getDirectMessages(Long userId, Long otherUserId) {
-        return messageRepository.findBySenderIdAndRecipientIdOrderByCreatedAtAsc(userId, otherUserId);
+        return messageRepository.findConversationMessages(userId, otherUserId);
     }
 
     public List<Message> getGroupMessages(Long groupId) {
@@ -71,7 +71,8 @@ public class MessageService {
     }
 
     public List<Message> getInbox(Long userId) {
-        return messageRepository.findByRecipientIdOrderByCreatedAtDesc(userId);
+        // Return both sent and received messages for the user
+        return messageRepository.findAllUserMessages(userId);
     }
 
     @Transactional

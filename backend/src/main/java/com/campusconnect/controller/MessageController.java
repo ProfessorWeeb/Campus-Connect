@@ -22,9 +22,9 @@ public class MessageController {
     @PostMapping("/direct")
     public ResponseEntity<MessageDTO> sendDirectMessage(
             @AuthenticationPrincipal UserPrincipal userPrincipal,
-            @RequestParam Long recipientId,
+            @RequestParam String recipientUsername,
             @RequestParam String content) {
-        Message message = messageService.sendDirectMessage(userPrincipal.getId(), recipientId, content);
+        Message message = messageService.sendDirectMessage(userPrincipal.getId(), recipientUsername, content);
         return ResponseEntity.ok(messageService.convertToDTO(message));
     }
 

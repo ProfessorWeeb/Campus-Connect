@@ -1,0 +1,117 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: 'RDS PostgreSQL Database for CampusConnect'
+
+Parameters:
+  DBInstanceIdentifier:
+    Type: String
+    Default: campusconnect-db
+    Description: Database instance identifier
+  
+  MasterUsername:
+    Type: String
+    Default: postgres
+    Description: Master database username
+    NoEcho: false
+  
+  MasterUserPassword:
+    Type: String
+    NoEcho: true
+    Description: Master database password (min 8 characters)
+    MinLength: 8
+  
+  DBName:
+    Type: String
+    Default: campusconnect
+    Description: Initial database name
+  
+  DBInstanceClass:
+    Type: String
+    Default: db.t3.micro
+    Description: Database instance class
+    AllowedValues:
+      - db.t3.micro
+      - db.t3.small
+      - db.t3.medium
+    ConstraintDescription: Must be a valid DB instance class
+  
+  AllocatedStorage:
+    Type: Number
+    Default: 20
+    Description: Allocated storage in GB
+    MinValue: 20
+    MaxValue: 100
+
+Resources:
+  # Security Group for RDS
+  RDSSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Security group for CampusConnect RDS database
+      VpcId: !Ref VPC
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 5432
+          ToPort: 5432
+          CidrIp: 0.0.0.0/0
+          Description: Allow PostgreSQL access from anywhere (restrict later)
+      Tags:
+        - Key: Name
+          Value: campusconnect-rds-sg
+
+  # RDS DB Subnet Group
+  DBSubnetGroup:
+    Type: AWS::RDS::DBSubnetGroup
+    Properties:
+      DBSubnetGroupDescription: Subnet group for CampusConnect RDS
+      SubnetIds:
+        - !Ref Subnet1
+        - !Ref Subnet2
+      Tags:
+        - Key: Name
+          Value: campusconnect-db-subnet-group
+
+  # RDS PostgreSQL Instance
+  RDSInstance:
+    Type: AWS::RDS::DBInstance
+    Properties:
+      DBInstanceIdentifier: !Ref DBInstanceIdentifier
+      Engine: postgres
+      EngineVersion: '16.1'
+      DBInstanceClass: !Ref DBInstanceClass
+      MasterUsername: !Ref MasterUsername
+      MasterUserPassword: !Ref MasterUserPassword
+      AllocatedStorage: !Ref AllocatedStorage
+      StorageType: gp2
+      DBName: !Ref DBName
+      DBSubnetGroupName: !Ref DBSubnetGroup
+      VPCSecurityGroups:
+        - !Ref RDSSecurityGroup
+      PubliclyAccessible: true
+      BackupRetentionPeriod: 7
+      MultiAZ: false
+      StorageEncrypted: true
+      Tags:
+        - Key: Name
+          Value: !Ref DBInstanceIdentifier
+        - Key: Project
+          Value: CampusConnect
+
+Outputs:
+  DBEndpoint:
+    Description: RDS Instance Endpoint
+    Value: !GetAtt RDSInstance.Endpoint.Address
+    Export:
+      Name: !Sub '${AWS::StackName}-Endpoint'
+  
+  DBPort:
+    Description: RDS Instance Port
+    Value: !GetAtt RDSInstance.Endpoint.Port
+    Export:
+      Name: !Sub '${AWS::StackName}-Port'
+  
+  SecurityGroupId:
+    Description: RDS Security Group ID
+    Value: !Ref RDSSecurityGroup
+    Export:
+      Name: !Sub '${AWS::StackName}-SecurityGroup'
+

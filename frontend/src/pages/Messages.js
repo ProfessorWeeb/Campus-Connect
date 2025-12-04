@@ -9,7 +9,8 @@ const Messages = () => {
   const [selectedConversation, setSelectedConversation] = useState(null);
   const [conversationUser, setConversationUser] = useState(null);
   const [newMessage, setNewMessage] = useState('');
-  const [recipientId, setRecipientId] = useState('');
+  const [recipientUsername, setRecipientUsername] = useState('');
+  const [isNewMessageMode, setIsNewMessageMode] = useState(false);
   const [loading, setLoading] = useState(true);
   const messagesEndRef = useRef(null);
   const messagesContainerRef = useRef(null);
@@ -56,42 +57,91 @@ const Messages = () => {
     e.preventDefault();
     if (!newMessage.trim()) return;
 
-    const targetRecipientId = selectedConversation || parseInt(recipientId);
-    if (!targetRecipientId) {
-      alert('Please select a conversation or enter a recipient ID');
+    // Determine the recipient username
+    let targetRecipientUsername = recipientUsername;
+
+    if (selectedConversation) {
+      // For existing conversations, get the username from the conversation
+      const conversation = conversations.find(c => c.userId === selectedConversation);
+      if (conversation) {
+        targetRecipientUsername = conversation.userName;
+      } else {
+        // Fallback: try to get username from messages
+        const firstMessage = messages.find(m => 
+          (m.senderId === selectedConversation && m.recipientId === user.id) ||
+          (m.recipientId === selectedConversation && m.senderId === user.id)
+        );
+        if (firstMessage) {
+          targetRecipientUsername = firstMessage.senderId === selectedConversation 
+            ? firstMessage.senderName 
+            : firstMessage.recipientName;
+        }
+      }
+    }
+
+    if (!targetRecipientUsername) {
+      alert('Please select a conversation or enter a recipient username');
       return;
     }
 
     try {
-      await axios.post('http://localhost:8080/api/messages/direct', null, {
+      const response = await axios.post('http://localhost:8080/api/messages/direct', null, {
         params: {
-          recipientId: targetRecipientId,
+          recipientUsername: targetRecipientUsername,
           content: newMessage,
         },
       });
+      
+      const sentMessage = response.data;
       setNewMessage('');
+      // Only clear recipientUsername if we're in new message mode
+      if (isNewMessageMode) {
+        setRecipientUsername('');
+      }
+      
+      // After sending, refresh messages and select the conversation
       await fetchMessages();
-      if (selectedConversation) {
-        // Refresh conversation messages
+      
+      // Find the recipient's user ID from the sent message
+      const recipientId = sentMessage.recipientId === user.id ? sentMessage.senderId : sentMessage.recipientId;
+      
+      if (isNewMessageMode || !selectedConversation) {
+        // If in new message mode, switch to the conversation
+        await handleConversationSelect(recipientId);
+        setIsNewMessageMode(false);
+      } else if (selectedConversation) {
+        // If conversation is selected, refresh conversation messages
         const conversationMessages = await fetchConversationMessages(selectedConversation);
-        // Update messages state with conversation messages
-        const otherMessages = messages.filter(m => 
-          (m.recipientId !== selectedConversation && m.senderId !== selectedConversation) ||
-          (m.recipientId === selectedConversation && m.senderId === user.id) ||
-          (m.senderId === selectedConversation && m.recipientId === user.id)
-        );
-        setMessages([...otherMessages, ...conversationMessages].sort((a, b) => 
-          new Date(a.createdAt) - new Date(b.createdAt)
-        ));
+        // Update messages state with all conversation messages
+        setMessages(prevMessages => {
+          // Keep messages from other conversations
+          const otherMessages = prevMessages.filter(m => 
+            (m.recipientId !== selectedConversation && m.senderId !== selectedConversation) ||
+            (m.recipientId === selectedConversation && m.senderId === user.id) ||
+            (m.senderId === selectedConversation && m.recipientId === user.id)
+          );
+          // Combine with fresh conversation messages
+          const allMessages = [...otherMessages, ...conversationMessages];
+          // Remove duplicates based on message ID
+          const uniqueMessages = Array.from(
+            new Map(allMessages.map(m => [m.id, m])).values()
+          );
+          return uniqueMessages.sort((a, b) => 
+            new Date(a.createdAt) - new Date(b.createdAt)
+          );
+        });
       }
     } catch (error) {
       console.error('Error sending message:', error);
-      alert('Failed to send message. Please check the recipient ID.');
+      const errorMessage = error.response?.data?.message || error.response?.data?.error || 'Failed to send message';
+      alert(`Failed to send message: ${errorMessage}. Please check the recipient username.`);
     }
   };
 
   const handleConversationSelect = async (otherUserId) => {
     setSelectedConversation(otherUserId);
+    setIsNewMessageMode(false);
+    setRecipientUsername('');
     const conversationMessages = await fetchConversationMessages(otherUserId);
     
     // Get the other user's info from the first message
@@ -117,6 +167,14 @@ const Messages = () => {
           // Ignore errors
         }
       });
+  };
+
+  const handleNewMessageClick = () => {
+    setIsNewMessageMode(true);
+    setSelectedConversation(null);
+    setConversationUser(null);
+    setRecipientUsername('');
+    setNewMessage('');
   };
 
   // Group messages by conversation (other user)
@@ -192,39 +250,6 @@ const Messages = () => {
       
       <div className="messages-layout">
         <div className="conversations-sidebar">
-          <div className="send-message-form-inline">
-            <div className="send-message-header">
-              <h2>Start New Conversation</h2>
-            </div>
-            <div className="send-message-content">
-              <form onSubmit={handleSendDirectMessage}>
-                <div className="form-group">
-                  <label>Recipient ID</label>
-                  <input
-                    type="number"
-                    value={recipientId}
-                    onChange={(e) => setRecipientId(e.target.value)}
-                    placeholder="Enter user ID"
-                    required
-                  />
-                </div>
-                <div className="form-group">
-                  <label>Message</label>
-                  <textarea
-                    value={newMessage}
-                    onChange={(e) => setNewMessage(e.target.value)}
-                    rows="3"
-                    placeholder="Type your message here..."
-                    required
-                  />
-                </div>
-                <button type="submit" className="btn btn-primary">
-                  Send Message
-                </button>
-              </form>
-            </div>
-          </div>
-
           <div className="conversations-header">
             <h2>Conversations</h2>
             <span className="conversation-count">{conversations.length}</span>
@@ -267,7 +292,53 @@ const Messages = () => {
         </div>
 
         <div className="messages-main">
-          {selectedConversation ? (
+          {isNewMessageMode || (!selectedConversation && !isNewMessageMode) ? (
+            <>
+              <div className="conversation-header-bar">
+                <div className="conversation-header-info">
+                  <div className="conversation-avatar-large">
+                    {recipientUsername ? recipientUsername.charAt(0).toUpperCase() : '?'}
+                  </div>
+                  <div className="username-input-container">
+                    <input
+                      type="text"
+                      value={recipientUsername}
+                      onChange={(e) => setRecipientUsername(e.target.value)}
+                      placeholder="Enter username"
+                      className="username-input"
+                      autoFocus
+                    />
+                  </div>
+                </div>
+              </div>
+
+              <div className="messages-container" ref={messagesContainerRef}>
+                <div className="no-messages">
+                  <p>Start a new conversation</p>
+                </div>
+              </div>
+
+              <div className="message-input-container">
+                <form onSubmit={handleSendDirectMessage} className="message-input-form">
+                  <input
+                    type="text"
+                    value={newMessage}
+                    onChange={(e) => setNewMessage(e.target.value)}
+                    placeholder="Type a message..."
+                    className="message-input"
+                    disabled={!recipientUsername.trim()}
+                  />
+                  <button 
+                    type="submit" 
+                    className="btn-send" 
+                    disabled={!newMessage.trim() || !recipientUsername.trim()}
+                  >
+                    Send
+                  </button>
+                </form>
+              </div>
+            </>
+          ) : selectedConversation ? (
             <>
               <div className="conversation-header-bar">
                 <div className="conversation-header-info">
@@ -279,6 +350,13 @@ const Messages = () => {
                     <span className="conversation-status">Online</span>
                   </div>
                 </div>
+                <button 
+                  className="btn-new-message"
+                  onClick={handleNewMessageClick}
+                  title="New Message"
+                >
+                  + New Message
+                </button>
               </div>
 
               <div className="messages-container" ref={messagesContainerRef}>
@@ -336,11 +414,18 @@ const Messages = () => {
               </div>
             </>
           ) : (
-            <div className="no-conversation-selected">
-              <div className="empty-state">
-                <div className="empty-state-icon">💬</div>
-                <h2>Select a conversation</h2>
-                <p>Choose a conversation from the sidebar to view and send messages</p>
+            <div className="new-conversation-view">
+              <div className="new-conversation-header">
+                <h2>Start New Conversation</h2>
+                <button 
+                  className="btn-new-message-header"
+                  onClick={handleNewMessageClick}
+                >
+                  + New Message
+                </button>
+              </div>
+              <div className="new-conversation-content">
+                <p className="new-conversation-hint">Click "New Message" to start a conversation</p>
               </div>
             </div>
           )}

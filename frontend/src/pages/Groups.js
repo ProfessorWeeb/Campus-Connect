@@ -8,6 +8,7 @@ const Groups = () => {
   const { user } = useContext(AuthContext);
   const [groups, setGroups] = useState([]);
   const [myCreatedGroups, setMyCreatedGroups] = useState([]);
+  const [myJoinedGroups, setMyJoinedGroups] = useState([]);
   const [searchQuery, setSearchQuery] = useState('');
   const [loading, setLoading] = useState(true);
   const [showCreateForm, setShowCreateForm] = useState(false);
@@ -65,9 +66,32 @@ const Groups = () => {
   const fetchMyCreatedGroups = async () => {
     try {
       const response = await axios.get('http://localhost:8080/api/groups/my-created-groups');
-      setMyCreatedGroups(response.data);
+      const createdGroups = response.data;
+      setMyCreatedGroups(createdGroups);
+      // Fetch joined groups after created groups are loaded, passing the created groups to filter
+      if (user) {
+        await fetchMyJoinedGroups(createdGroups);
+      }
     } catch (error) {
       console.error('Error fetching my created groups:', error);
+    }
+  };
+
+  const fetchMyJoinedGroups = async (createdGroups = null) => {
+    try {
+      const token = localStorage.getItem('token');
+      const response = await axios.get('http://localhost:8080/api/groups/my-groups', {
+        headers: {
+          Authorization: `Bearer ${token}`
+        }
+      });
+      // Filter out groups the user created (those are shown in My Created Groups)
+      const groupsToFilter = createdGroups || myCreatedGroups;
+      const createdGroupIds = new Set(groupsToFilter.map(g => g.id));
+      const joinedGroups = response.data.filter(group => !createdGroupIds.has(group.id));
+      setMyJoinedGroups(joinedGroups);
+    } catch (error) {
+      console.error('Error fetching my joined groups:', error);
     }
   };
 
@@ -200,6 +224,7 @@ const Groups = () => {
       setSearchResults([]);
       fetchGroups();
       fetchMyCreatedGroups();
+      fetchMyJoinedGroups();
       alert('Group created successfully! Invitations have been sent to selected users.');
     } catch (error) {
       console.error('Error creating group:', error);
@@ -270,7 +295,7 @@ const Groups = () => {
       // Refresh groups and created groups to update UI
       await fetchGroups();
       if (user) {
-        await fetchMyCreatedGroups();
+        await fetchMyCreatedGroups(); // This will also fetch joined groups
       }
     } catch (error) {
       console.error('Error joining group:', error);
@@ -611,13 +636,59 @@ const Groups = () => {
         </div>
       )}
 
+      {myJoinedGroups.length > 0 && (
+        <div className="my-joined-groups-section">
+          <h2 className="section-header">My Joined Groups</h2>
+          <div className="groups-list">
+            {myJoinedGroups.map((group) => {
+              const isMember = user && group.memberIds && group.memberIds.includes(user.id);
+              const isCreator = user && group.creatorId === user.id;
+              const canJoinDirectly = !group.requiresInvite && !isMember && !isCreator;
+              const isJoining = joiningGroups.has(group.id);
+
+              return (
+                <div key={group.id} className="card group-card joined-group-card">
+                  <h3>{group.name}</h3>
+                  <p className="group-course">{group.courseName} {group.courseCode && `(${group.courseCode})`}</p>
+                  {group.topic && <p className="group-topic">Topic: {group.topic}</p>}
+                  {group.description && <p className="group-description">{group.description}</p>}
+                  <div className="group-meta">
+                    <span>Members: {group.currentSize}/{group.maxSize}</span>
+                    <span>Created by: {group.creatorName}</span>
+                    <span className="privacy-badge">
+                      {group.visibility === 'PUBLIC' 
+                        ? (group.requiresInvite ? '🔒 Public - Invite Only' : '🌐 Public')
+                        : (group.requiresInvite ? '🔒 Private - Invite Only' : '🔒 Private')}
+                    </span>
+                  </div>
+                  <div className="group-actions">
+                    {isMember && (
+                      <span className="member-badge">✓ Member</span>
+                    )}
+                    {isCreator && (
+                      <span className="creator-badge">👑 Creator</span>
+                    )}
+                    <Link to={`/groups/${group.id}`} className="btn btn-primary">
+                      View Details
+                    </Link>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
+
       <div className="all-groups-section">
         <h2 className="section-header">
-          {myCreatedGroups.length > 0 ? 'All Groups' : 'Groups'}
+          {(myCreatedGroups.length > 0 || myJoinedGroups.length > 0) ? 'All Groups' : 'Groups'}
         </h2>
         <div className="groups-list">
           {groups
-            .filter(group => !myCreatedGroups.some(created => created.id === group.id))
+            .filter(group => 
+              !myCreatedGroups.some(created => created.id === group.id) &&
+              !myJoinedGroups.some(joined => joined.id === group.id)
+            )
             .map((group) => {
               const isMember = user && group.memberIds && group.memberIds.includes(user.id);
               const isCreator = user && group.creatorId === user.id;
