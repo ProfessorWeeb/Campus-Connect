@@ -1,12 +1,9 @@
 package com.campusconnect.service;
 
-import com.campusconnect.dto.AuthResponse;
-import com.campusconnect.dto.LoginRequest;
-import com.campusconnect.dto.RegisterRequest;
-import com.campusconnect.model.User;
-import com.campusconnect.repository.UserRepository;
-import com.campusconnect.security.JwtTokenProvider;
-import com.campusconnect.security.UserPrincipal;
+import java.util.Collections;
+import java.util.List;
+import java.util.Random;
+
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.security.authentication.AuthenticationManager;
 import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
@@ -16,9 +13,13 @@ import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
-import java.util.Collections;
-import java.util.List;
-import java.util.Random;
+import com.campusconnect.dto.AuthResponse;
+import com.campusconnect.dto.LoginRequest;
+import com.campusconnect.dto.RegisterRequest;
+import com.campusconnect.model.User;
+import com.campusconnect.repository.UserRepository;
+import com.campusconnect.security.JwtTokenProvider;
+import com.campusconnect.security.UserPrincipal;
 
 @Service
 public class AuthService {
@@ -132,11 +133,19 @@ public class AuthService {
                     "Welcome! If you need help navigating the platform, just let me know!"
             );
 
+            // Get the new user to retrieve username
+            User newUser = userRepository.findById(newUserId)
+                    .orElse(null);
+            
+            if (newUser == null) {
+                return; // User not found, can't send messages
+            }
+            
             // Send messages from each selected bot
             for (User bot : selectedBots) {
                 try {
                     String message = welcomeMessages.get(random.nextInt(welcomeMessages.size()));
-                    messageService.sendDirectMessage(bot.getId(), newUserId, message);
+                    messageService.sendDirectMessage(bot.getId(), newUser.getUsername(), message);
                 } catch (Exception e) {
                     // Log error but continue with other bots
                     System.err.println("Failed to send welcome message from bot " + bot.getId() + ": " + e.getMessage());

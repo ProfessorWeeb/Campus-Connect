@@ -222,7 +222,7 @@ public class BotSeederService {
                 String content = String.format(template, courseName);
                 
                 try {
-                    messageService.sendDirectMessage(bot.getId(), recipient.getId(), content);
+                    messageService.sendDirectMessage(bot.getId(), recipient.getUsername(), content);
                     messagesSent++;
                     sent++;
                 } catch (Exception e) {
@@ -255,7 +255,7 @@ public class BotSeederService {
                         : template;
                     
                     try {
-                        messageService.sendDirectMessage(groupCreator.getId(), realUser.getId(), content);
+                        messageService.sendDirectMessage(groupCreator.getId(), realUser.getUsername(), content);
                         creatorMessagesSent++;
                     } catch (Exception e) {
                         // Skip if message fails
@@ -405,7 +405,7 @@ public class BotSeederService {
                 String content = String.format(template, courseName);
                 
                 try {
-                    messageService.sendDirectMessage(bot.getId(), recipient.getId(), content);
+                    messageService.sendDirectMessage(bot.getId(), recipient.getUsername(), content);
                     messagesSent++;
                     sent++;
                 } catch (Exception e) {
@@ -438,7 +438,7 @@ public class BotSeederService {
                         : template;
                     
                     try {
-                        messageService.sendDirectMessage(groupCreator.getId(), realUser.getId(), content);
+                        messageService.sendDirectMessage(groupCreator.getId(), realUser.getUsername(), content);
                         creatorMessagesSent++;
                     } catch (Exception e) {
                         // Skip if message fails
